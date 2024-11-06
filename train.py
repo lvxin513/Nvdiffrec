@@ -236,7 +236,6 @@ def validate(glctx, geometry, opt_material, lgt, dataset_validate, out_dir, FLAG
 
         print("Running validation")
         for it, target in enumerate(dataloader_validate):
-
             # Mix validation background
             target = prepare_batch(target, FLAGS.background)
 
@@ -303,7 +302,7 @@ def optimize_mesh(
     glctx,
     geometry,
     opt_material,
-    lgt,
+    lgt, # light
     dataset_train,
     dataset_validate,
     FLAGS,
@@ -387,7 +386,7 @@ def optimize_mesh(
 
         # Mix randomized background into dataset image
         target = prepare_batch(target, 'random')
-
+    
         # ==============================================================================================
         #  Display / save outputs. Do it before training so we get initial meshes
         # ==============================================================================================

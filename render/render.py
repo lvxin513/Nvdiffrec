@@ -28,11 +28,11 @@ def shade(
         gb_geometric_normal,
         gb_normal,
         gb_tangent,
-        gb_texc,
+        gb_texc, # Texture Coordinates
         gb_texc_deriv,
         view_pos,
         lgt,
-        material,
+        material, # properites
         bsdf
     ):
 
@@ -66,6 +66,7 @@ def shade(
     if 'no_perturbed_nrm' in material and material['no_perturbed_nrm']:
         perturbed_nrm = None
 
+    # gb:G_Buffer
     gb_normal = ru.prepare_shading_normal(gb_pos, view_pos, perturbed_nrm, gb_normal, gb_tangent, gb_geometric_normal, two_sided_shading=True, opengl=True)
 
     ################################################################################
@@ -219,7 +220,11 @@ def render_mesh(
     # Convert numpy arrays to torch tensors
     mtx_in      = torch.tensor(mtx_in, dtype=torch.float32, device='cuda') if not torch.is_tensor(mtx_in) else mtx_in
     view_pos    = prepare_input_vector(view_pos)
-
+    
+    # Spot light process
+    light_position = torch.tensor([0.348799 -0.334989,0.083233])
+    light_direction = torch.tensor([0,0,-1])
+    
     # clip space transform
     v_pos_clip = ru.xfm_points(mesh.v_pos[None, ...], mtx_in)
 
