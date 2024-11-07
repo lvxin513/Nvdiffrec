@@ -463,3 +463,45 @@ def checkerboard(res, checker_size) -> np.ndarray:
     check = check[:res[0], :res[1]]
     return np.stack((check, check, check), axis=-1)
 
+
+#---------------------------------------------------------------------
+# Use uv coordinate to query albedo, roughness from material texture
+#---------------------------------------------------------------------
+
+def index_uv(mesh, material):
+
+    """
+    Args:
+
+        mesh:store v_pos, v_tex, faces and so on.
+        material: shape 1024*1024*3.
+
+    Returns:
+        albedo, roughness for every vertex.
+    """ 
+    v_pos_uv_map = torch.full((mesh.v_pos.size(0), 2), -1.0, dtype=torch.float32)
+    for face_idx in range(mesh.t_pos_idx.size(0)):
+        pos_indices = mesh.t_pos_idx[face_idx]
+        tex_indices = mesh.t_tex_idx[face_idx]
+
+        # Assign UV coordinates for each vertex in this triangle
+        for local_idx in range(pos_indices.size(0)):
+            v_idx = pos_indices[local_idx]
+            uv_idx = tex_indices[local_idx]
+            v_pos_uv_map[v_idx] = mesh.v_tex[uv_idx]
+
+    kd = material['kd'].squeeze(0)
+    ks = material['ks'].squeeze(0)
+    row = v_pos_uv_map[:,0]
+    col = v_pos_uv_map[:,1]
+    row = (np.rint(row.numpy() * 1024)).astype(int)
+    col = (np.rint(col.numpy() * 1024)).astype(int)
+    kd = kd[row,col]
+    ks = ks[row,col]
+
+    albedo = kd  # shape:num of vertices * 3
+    roughness = ks[:,1]  # shape:num of vertices * 1
+
+    return albedo, roughness
+
+
