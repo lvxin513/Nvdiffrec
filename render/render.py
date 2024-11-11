@@ -28,12 +28,13 @@ def shade(
         gb_geometric_normal,
         gb_normal,
         gb_tangent,
-        gb_texc, # Texture Coordinates
+        gb_texc,
         gb_texc_deriv,
         view_pos,
         lgt,
-        material, # properites
-        bsdf
+        material,
+        bsdf,
+        pointlight = None
     ):
 
     ################################################################################
@@ -66,7 +67,6 @@ def shade(
     if 'no_perturbed_nrm' in material and material['no_perturbed_nrm']:
         perturbed_nrm = None
 
-    # gb:G_Buffer
     gb_normal = ru.prepare_shading_normal(gb_pos, view_pos, perturbed_nrm, gb_normal, gb_tangent, gb_geometric_normal, two_sided_shading=True, opengl=True)
 
     ################################################################################
@@ -77,7 +77,10 @@ def shade(
     bsdf = material['bsdf'] if bsdf is None else bsdf
     if bsdf == 'pbr':
         if isinstance(lgt, light.EnvironmentLight):
-            shaded_col = lgt.shade(gb_pos, gb_normal, kd, ks, view_pos, specular=True)
+            if pointlight:
+                shaded_col = lgt.shade_spot(gb_pos, gb_normal, kd, ks, view_pos, specular=True, pointlight = pointlight)
+            else:
+                shaded_col = lgt.shade(gb_pos, gb_normal, kd, ks, view_pos, specular=True)
         else:
             assert False, "Invalid light type"
     elif bsdf == 'diffuse':
@@ -119,7 +122,8 @@ def render_layer(
         resolution,
         spp,
         msaa,
-        bsdf
+        bsdf,
+        pointlight = None
     ):
 
     full_res = [resolution[0]*spp, resolution[1]*spp]
@@ -165,7 +169,7 @@ def render_layer(
     ################################################################################
 
     buffers = shade(gb_pos, gb_geometric_normal, gb_normal, gb_tangent, gb_texc, gb_texc_deriv, 
-        view_pos, lgt, mesh.material, bsdf)
+        view_pos, lgt, mesh.material, bsdf = bsdf, pointlight = pointlight)
 
     ################################################################################
     # Prepare output
@@ -196,7 +200,8 @@ def render_mesh(
         num_layers  = 1,
         msaa        = False,
         background  = None, 
-        bsdf        = None
+        bsdf        = None,
+        pointlight  = None
     ):
 
     def prepare_input_vector(x):
@@ -220,11 +225,7 @@ def render_mesh(
     # Convert numpy arrays to torch tensors
     mtx_in      = torch.tensor(mtx_in, dtype=torch.float32, device='cuda') if not torch.is_tensor(mtx_in) else mtx_in
     view_pos    = prepare_input_vector(view_pos)
-    
-    # Spot light process
-    light_position = torch.tensor([0.348799 -0.334989,0.083233])
-    light_direction = torch.tensor([0,0,-1])
-    
+
     # clip space transform
     v_pos_clip = ru.xfm_points(mesh.v_pos[None, ...], mtx_in)
 
@@ -233,7 +234,7 @@ def render_mesh(
     with dr.DepthPeeler(ctx, v_pos_clip, mesh.t_pos_idx.int(), full_res) as peeler:
         for _ in range(num_layers):
             rast, db = peeler.rasterize_next_layer()
-            layers += [(render_layer(rast, db, mesh, view_pos, lgt, resolution, spp, msaa, bsdf), rast)]
+            layers += [(render_layer(rast, db, mesh, view_pos, lgt, resolution, spp, msaa, bsdf,pointlight), rast)]
 
     # Setup background
     if background is not None:

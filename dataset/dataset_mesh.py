@@ -23,7 +23,7 @@ from .dataset import Dataset
 
 class DatasetMesh(Dataset):
 
-    def __init__(self, ref_mesh, glctx, cam_radius, FLAGS, validate=False):
+    def __init__(self, ref_mesh, glctx, cam_radius, FLAGS, validate=False, pointlight = None):
         # Init 
         self.glctx              = glctx
         self.cam_radius         = cam_radius
@@ -31,7 +31,8 @@ class DatasetMesh(Dataset):
         self.validate           = validate
         self.fovy               = np.deg2rad(45)
         self.aspect             = FLAGS.train_res[1] / FLAGS.train_res[0]
-
+        self.pointlight         = pointlight
+        
         if self.FLAGS.local_rank == 0:
             print("DatasetMesh: ref mesh has %d triangles and %d vertices" % (ref_mesh.t_pos_idx.shape[0], ref_mesh.v_pos.shape[0]))
 
@@ -90,7 +91,7 @@ class DatasetMesh(Dataset):
             mv, mvp, campos, iter_res, iter_spp = self._random_scene()
 
         img = render.render_mesh(self.glctx, self.ref_mesh, mvp, campos, self.envlight, iter_res, spp=iter_spp, 
-                                num_layers=self.FLAGS.layers, msaa=True, background=None)['shaded']
+                                num_layers=self.FLAGS.layers, msaa=True, background=None,pointlight=self.pointlight)['shaded']
 
         return {
             'mv' : mv,

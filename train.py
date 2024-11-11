@@ -182,14 +182,14 @@ def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
 # Validation & testing
 ###############################################################################
 
-def validate_itr(glctx, target, geometry, opt_material, lgt, FLAGS):
+def validate_itr(glctx, target, geometry, opt_material, lgt, FLAGS,pointlight):
     result_dict = {}
     with torch.no_grad():
         lgt.build_mips()
         if FLAGS.camera_space_light:
             lgt.xfm(target['mv'])
 
-        buffers = geometry.render(glctx, target, lgt, opt_material)
+        buffers = geometry.render(glctx, target, lgt, opt_material,bsdf = None, pointlight = pointlight)
 
         result_dict['ref'] = util.rgb_to_srgb(target['img'][...,0:3])[0]
         result_dict['opt'] = util.rgb_to_srgb(buffers['shaded'][...,0:3])[0]
@@ -270,7 +270,7 @@ def validate(glctx, geometry, opt_material, lgt, dataset_validate, out_dir, FLAG
 ###############################################################################
 
 class Trainer(torch.nn.Module):
-    def __init__(self, glctx, geometry, lgt, mat, optimize_geometry, optimize_light, image_loss_fn, FLAGS):
+    def __init__(self, glctx, geometry, lgt, mat, optimize_geometry, optimize_light, image_loss_fn, FLAGS,pointlight=None):
         super(Trainer, self).__init__()
 
         self.glctx = glctx
@@ -281,6 +281,7 @@ class Trainer(torch.nn.Module):
         self.optimize_light = optimize_light
         self.image_loss_fn = image_loss_fn
         self.FLAGS = FLAGS
+        self.pointlight = pointlight
 
         if not self.optimize_light:
             with torch.no_grad():
@@ -296,7 +297,7 @@ class Trainer(torch.nn.Module):
             if self.FLAGS.camera_space_light:
                 self.light.xfm(target['mv'])
 
-        return self.geometry.tick(glctx, target, self.light, self.material, self.image_loss_fn, it)
+        return self.geometry.tick(glctx, target, self.light, self.material, self.image_loss_fn, it,self.pointlight)
 
 def optimize_mesh(
     glctx,
@@ -306,6 +307,7 @@ def optimize_mesh(
     dataset_train,
     dataset_validate,
     FLAGS,
+    pointlight = None,
     warmup_iter=0,
     log_interval=10,
     pass_idx=0,
@@ -317,7 +319,7 @@ def optimize_mesh(
     # ==============================================================================================
     #  Setup torch optimizer
     # ==============================================================================================
-
+    
     learning_rate = FLAGS.learning_rate[pass_idx] if isinstance(FLAGS.learning_rate, list) or isinstance(FLAGS.learning_rate, tuple) else FLAGS.learning_rate
     learning_rate_pos = learning_rate[0] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate
     learning_rate_mat = learning_rate[1] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate
@@ -332,7 +334,7 @@ def optimize_mesh(
     # ==============================================================================================
     image_loss_fn = createLoss(FLAGS)
 
-    trainer_noddp = Trainer(glctx, geometry, lgt, opt_material, optimize_geometry, optimize_light, image_loss_fn, FLAGS)
+    trainer_noddp = Trainer(glctx, geometry, lgt, opt_material, optimize_geometry, optimize_light, image_loss_fn, FLAGS,pointlight)
     if FLAGS.isosurface == 'flexicubes':
         betas = (0.7, 0.9)
     else:
@@ -386,7 +388,6 @@ def optimize_mesh(
 
         # Mix randomized background into dataset image
         target = prepare_batch(target, 'random')
-    
         # ==============================================================================================
         #  Display / save outputs. Do it before training so we get initial meshes
         # ==============================================================================================
@@ -396,7 +397,7 @@ def optimize_mesh(
             display_image = FLAGS.display_interval and (it % FLAGS.display_interval == 0)
             save_image = FLAGS.save_interval and (it % FLAGS.save_interval == 0)
             if display_image or save_image:
-                result_image, result_dict = validate_itr(glctx, prepare_batch(next(v_it), FLAGS.background), geometry, opt_material, lgt, FLAGS)
+                result_image, result_dict = validate_itr(glctx, prepare_batch(next(v_it), FLAGS.background), geometry, opt_material, lgt, FLAGS,pointlight)
                 np_result_image = result_image.detach().cpu().numpy()
                 if display_image:
                     util.display_image(np_result_image, title='%d / %d' % (it, FLAGS.iter))
@@ -524,8 +525,9 @@ if __name__ == "__main__":
     FLAGS.nrm_max             = [ 1.0,  1.0,  1.0]
     FLAGS.cam_near_far        = [0.1, 1000.0]
     FLAGS.learn_light         = True
-
+    FLAGS.learn_pointlight   = False
     FLAGS.local_rank = 0
+
     FLAGS.multi_gpu  = "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1
     if FLAGS.multi_gpu:
         if "MASTER_ADDR" not in os.environ:
@@ -560,13 +562,21 @@ if __name__ == "__main__":
 
     glctx = dr.RasterizeGLContext()
 
+    if FLAGS.learn_pointlight:
+        pointlight = 1
+    else:
+        position = torch.tensor([0.5,0.5,0.5]).to('cuda')
+        intensity = torch.tensor([0,0,1]).to('cuda')
+        pointlight = light.PointLight(position,intensity)
+        # pointlight = None
+
     # ==============================================================================================
     #  Create data pipeline
     # ==============================================================================================
     if os.path.splitext(FLAGS.ref_mesh)[1] == '.obj':
         ref_mesh         = mesh.load_mesh(FLAGS.ref_mesh, FLAGS.mtl_override)
-        dataset_train    = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=False)
-        dataset_validate = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=True)
+        dataset_train    = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=False, pointlight= pointlight)
+        dataset_validate = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=True, pointlight=pointlight)
     elif os.path.isdir(FLAGS.ref_mesh):
         if os.path.isfile(os.path.join(FLAGS.ref_mesh, 'poses_bounds.npy')):
             dataset_train    = DatasetLLFF(FLAGS.ref_mesh, FLAGS, examples=(FLAGS.iter+1)*FLAGS.batch)
@@ -578,7 +588,7 @@ if __name__ == "__main__":
     # ==============================================================================================
     #  Create env light with trainable parameters
     # ==============================================================================================
-    
+
     if FLAGS.learn_light:
         lgt = light.create_trainable_env_rnd(512, scale=0.0, bias=0.5)
     else:
@@ -602,7 +612,7 @@ if __name__ == "__main__":
     
         # Run optimization
         geometry, mat = optimize_mesh(glctx, geometry, mat, lgt, dataset_train, dataset_validate, 
-                        FLAGS, pass_idx=0, pass_name="dmtet_pass1", optimize_light=FLAGS.learn_light)
+                        FLAGS, pointlight,pass_idx=0, pass_name="dmtet_pass1", optimize_light=FLAGS.learn_light)
 
         if FLAGS.local_rank == 0 and FLAGS.validate:
             validate(glctx, geometry, mat, lgt, dataset_validate, os.path.join(FLAGS.out_dir, "dmtet_validate"), FLAGS)
@@ -627,7 +637,7 @@ if __name__ == "__main__":
         # ==============================================================================================
         #  Pass 2: Train with fixed topology (mesh)
         # ==============================================================================================
-        geometry, mat = optimize_mesh(glctx, geometry, base_mesh.material, lgt, dataset_train, dataset_validate, FLAGS, 
+        geometry, mat = optimize_mesh(glctx, geometry, base_mesh.material, lgt, dataset_train, dataset_validate, FLAGS, pointlight=pointlight,
                     pass_idx=1, pass_name="mesh_pass", warmup_iter=100, optimize_light=FLAGS.learn_light and not FLAGS.lock_light, 
                     optimize_geometry=not FLAGS.lock_pos)
     else:
@@ -641,7 +651,7 @@ if __name__ == "__main__":
         
         mat = initial_guess_material(geometry, False, FLAGS, init_mat=base_mesh.material)
 
-        geometry, mat = optimize_mesh(glctx, geometry, mat, lgt, dataset_train, dataset_validate, FLAGS, pass_idx=0, pass_name="mesh_pass", 
+        geometry, mat = optimize_mesh(glctx, geometry, mat, lgt, dataset_train, dataset_validate, FLAGS, pointlight=pointlight,pass_idx=0, pass_name="mesh_pass", 
                                         warmup_iter=100, optimize_light=not FLAGS.lock_light, optimize_geometry=not FLAGS.lock_pos)
 
     # ==============================================================================================

@@ -1,5 +1,6 @@
 {
     "ref_mesh": "data/spot/spot.obj",
+    "base_mesh": "data/spot/spot.obj",
     "random_textures": true,
     "iter": 5000,
     "save_interval": 1000,
@@ -11,5 +12,5 @@
     "envmap": "./interior.hdr",
     "background": "white",
     "validate" : false,
-    "out_dir": "spot"
+    "out_dir": "blue_spot"
 }

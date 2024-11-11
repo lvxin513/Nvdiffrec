@@ -43,17 +43,17 @@ class DLMesh(torch.nn.Module):
         imesh = mesh.compute_tangents(imesh)
         return imesh
 
-    def render(self, glctx, target, lgt, opt_material, bsdf=None):
+    def render(self, glctx, target, lgt, opt_material, bsdf=None, pointlight = None):
         opt_mesh = self.getMesh(opt_material)
         return render.render_mesh(glctx, opt_mesh, target['mvp'], target['campos'], lgt, target['resolution'], spp=target['spp'], 
-                                    num_layers=self.FLAGS.layers, msaa=True, background=target['background'], bsdf=bsdf)
+                                    num_layers=self.FLAGS.layers, msaa=True, background=target['background'], bsdf=bsdf,pointlight=pointlight)
 
-    def tick(self, glctx, target, lgt, opt_material, loss_fn, iteration):
+    def tick(self, glctx, target, lgt, opt_material, loss_fn, iteration, pointlight = None):
         
         # ==============================================================================================
         #  Render optimizable object with identical conditions
         # ==============================================================================================
-        buffers = self.render(glctx, target, lgt, opt_material)
+        buffers = self.render(glctx, target, lgt, opt_material,bsdf = None,pointlight = pointlight)
 
         # ==============================================================================================
         #  Compute loss
